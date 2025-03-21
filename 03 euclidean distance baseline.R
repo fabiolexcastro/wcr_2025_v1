@@ -3,6 +3,8 @@
 require(pacman)
 p_load(terra, sf, fs, tidyverse, parallelDist, Rfast, glue, outliers, spatialEco, climateStability, dismo, scales, glue, rnaturalearthdata, rnaturalearth, openxlsx)
 
+
+## Repetin con Worldclim & CMIP6
 g <- gc(reset = T)
 rm(list = ls())
 options(scipen = 999, warn = -1)
@@ -30,13 +32,13 @@ euc_clm <- function(gid){
   ## Filtering 
   cat('To process: ', gid, '\n')
   pnt <- filter(pnts, id == gid)
-  pnt <- dplyr::select(pnt, id, Longitude, Latitude, Dim.1, Dim.2)
+  pnt <- dplyr::select(pnt, id, Longitude, Latitude, Dim.1, Dim.2, Dim.3, Dim.4)
   bse <- dplyr::select(pnt, starts_with('Dim'))
   pca <- pcas
-  pca <- pca[[1:2]]
+  pca <- pca[[1:4]]
   
   ## Apply the euclidean distance 
-  dst <- dista(xnew = as.matrix(bse), as.matrix(pcas.mtrx[,3:4]), type = 'euclidean')
+  dst <- dista(xnew = as.matrix(bse), as.matrix(pcas.mtrx[,3:6]), type = 'euclidean')
   dst <- as.vector(dst)
   
   ## Table to raster
@@ -48,6 +50,10 @@ euc_clm <- function(gid){
   return(fnl)
   
 }
+
+
+
+
 
 ##
 rstr <- map(pull(pnts, id), euc_clm)

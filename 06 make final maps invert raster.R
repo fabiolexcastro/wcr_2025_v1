@@ -170,15 +170,15 @@ thrs.get <- function(gid){
   tbl <- filter(tbl, var == 'Baseline')
   
   ### Threshold
-  thr <- quantile(x = pull(tbl, value), probs = c(0.9, 0.95, 0.99), na.rm = T)
+  thr <- quantile(x = pull(tbl, value), probs = c(0.1, 0.05, 0.01), na.rm = T)
   thr <- rownames_to_column(as.data.frame(thr))
   thr <- mutate(thr, percentil = parse_number(rowname), threshold = thr)
   thr <- mutate(thr, id = gid)
   thr <- dplyr::select(thr, id, percentil, threshold)
   
-  thr.90 <- thr %>% filter(percentil == 90) %>% pull(3)
-  thr.95 <- thr %>% filter(percentil == 95) %>% pull(3)
-  thr.99 <- thr %>% filter(percentil == 99) %>% pull(3)
+  thr.10 <- thr %>% filter(percentil == 10) %>% pull(3)
+  thr.05 <- thr %>% filter(percentil ==  5) %>% pull(3)
+  thr.01 <- thr %>% filter(percentil ==  1) %>% pull(3)
   
   ## Tolerance
   tolerance <- 0.000001
@@ -187,20 +187,17 @@ thrs.get <- function(gid){
   pnt <- pnts %>% filter(id == gid)
   
   ## Get the coordinate
-  # pnt.90 <- bsl %>% setNames('Baseline') %>% as.data.frame(xy = T) %>% filter(Baseline == round(thr.90, 4))
-  # pnt.95 <- bsl %>% setNames('Baseline') %>% as.data.frame(xy = T) %>% filter(Baseline == thr.95)
-  # pnt.99 <- bsl %>% setNames('Baseline') %>% as.data.frame(xy = T) %>% filter(Baseline == thr.99)
-  pnt.90 <- bsl %>% setNames('Baseline') %>% as.data.frame(xy = TRUE) %>% filter(abs(Baseline - thr.90) <= tolerance)
-  pnt.95 <- bsl %>% setNames('Baseline') %>% as.data.frame(xy = TRUE) %>% filter(abs(Baseline - thr.95) <= tolerance)
-  pnt.99 <- bsl %>% setNames('Baseline') %>% as.data.frame(xy = TRUE) %>% filter(abs(Baseline - thr.99) <= tolerance)
+  pnt.10 <- bsl %>% setNames('Baseline') %>% as.data.frame(xy = TRUE) %>% filter(abs(Baseline - thr.10) <= tolerance)
+  pnt.05 <- bsl %>% setNames('Baseline') %>% as.data.frame(xy = TRUE) %>% filter(abs(Baseline - thr.05) <= tolerance)
+  pnt.01 <- bsl %>% setNames('Baseline') %>% as.data.frame(xy = TRUE) %>% filter(abs(Baseline - thr.01) <= tolerance)
   
   ## Sampling with n > 1
-  pnt.90 <- pnt.90 %>% sample_n(size = 1, replace = FALSE)
-  pnt.95 <- pnt.95 %>% sample_n(size = 1, replace = FALSE)
-  pnt.99 <- pnt.99 %>% sample_n(size = 1, replace = FALSE)
+  pnt.10 <- pnt.10 %>% sample_n(size = 1, replace = FALSE)
+  pnt.05 <- pnt.05 %>% sample_n(size = 1, replace = FALSE)
+  pnt.01 <- pnt.01 %>% sample_n(size = 1, replace = FALSE)
   
   ## Tidy the tables (thresholds + points) / Coordinates
-  pnt.th <- rbind(pnt.90, pnt.95, pnt.99) %>% mutate(percentil = c(90, 95, 99)) %>% mutate(id = gid, .before = x)
+  pnt.th <- rbind(pnt.10, pnt.05, pnt.01) %>% mutate(percentil = c(10, 5, 1)) %>% mutate(id = gid, .before = x)
   pnt <- pnt %>% setNames(c('id', 'x', 'y'))
   pnt <- pnt %>% mutate(Baseline = pull(terra::extract(bsl, pnt[,c(2,3)]), 2))
   pnt <- pnt %>% mutate(percentil = 100)
@@ -222,7 +219,7 @@ thrs.get <- function(gid){
     dplyr::select(-Month) %>% 
     spread(Variable, value) %>% 
     mutate(type = ifelse(percentil == 100, 'Trial', percentil), 
-           type = factor(type, levels = c('Trial', '90', '95', '99')))
+           type = factor(type, levels = c('Trial', '10', '5', '1')))
   
   ## To make the graph 
   rlc <- 10
@@ -243,7 +240,7 @@ thrs.get <- function(gid){
     )
   
   ## To save the graph 
-  ggsave(plot = ggp, filename = glue('./png/graphs/climatogram_percentiles/climatogram_{gid}.jpg'), units = 'in', width = 9, height = 7, dpi = 300, create.dir = TRUE)
+  ggsave(plot = ggp, filename = glue('./png/graphs/climatogram_percentiles_invert/climatogram_{gid}.jpg'), units = 'in', width = 9, height = 7, dpi = 300, create.dir = TRUE)
   
   ## Finish 
   cat('Done!\n')
