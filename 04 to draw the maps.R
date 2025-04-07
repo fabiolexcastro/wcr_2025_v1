@@ -1,0 +1,184 @@
+
+# Load libraries ----------------------------------------------------------
+require(pacman)
+p_load(terra, sf, fs, tidyverse, tidyterra, rmapshaper, parallelDist, Rfast, glue, outliers, spatialEco, climateStability, dismo, scales, glue, rnaturalearthdata, rnaturalearth, openxlsx)
+
+g <- gc(reset = T)
+rm(list = ls())
+options(scipen = 999, warn = -1)
+
+# Load data ---------------------------------------------------------------
+
+## Points 
+pnts <- as_tibble(read.xlsx('./tbl/IMLVT Site info.xlsx'))
+pnts <- mutate(pnts, id = gsub('Bulegeni\t\t_UGA', 'Bulegeni_UGA', id))
+gids <- unique(pnts$id)
+
+## List the files 
+fles <- as.character(dir_ls('./tif/output/euc'))
+
+## Vector data 
+wrld <- ne_countries(returnclass = 'sf', scale = 50)
+cntn <- ms_dissolve(wrld, field = 'continent')
+
+# To draw the maps --------------------------------------------------------
+gid <- gids[1]
+prc <- 0.99
+
+# To make the binary analysis ---------------------------------------------
+
+## Function
+make.bins <- function(gid, prc){
+  
+  ##
+  cat('To process: ', gid, '\n')
+  fls <- grep(gid, fles, value = T)
+
+  ## Current
+  bsl <- rast(grep('bsl', fls, value = T))
+  
+  ## Future 
+  ftr <- rast(fls[-grep('bsl', fls, value = F)])
+  
+  ## Point
+  pnt <- filter(pnts, id == gid)
+  
+  ## To normalice and intert the raster
+  
+  ### Baseline
+  bsl.nrm <- rescale0to1(bsl)
+  bsl.nrm <- raster.invert(bsl.nrm)
+
+  ### Future 
+  ftr.nrm <- map(.x = 1:nlyr(ftr), .f = function(i){print(i); rescale0to1(ftr[[i]])})
+  ftr.nrm <- reduce(ftr.nrm, c)
+  
+  ## To extract the percentile 
+  thr <- as.numeric(terra::global(x = bsl.nrm, fun = stats::quantile, probs = prc, na.rm = T))
+
+  ## To binarize 
+  mtx <- matrix(c(0, thr, 0, thr, 1, 1), ncol = 3, byrow = TRUE)
+  bsl.bin <- terra::classify(bsl.nrm, mtx, include.lowest = T)
+  ftr.bin <- terra::classify(ftr.nrm, mtx, include.lowest = T)
+  
+  ## To make a stack 
+  stk <- c(bsl.bin, ftr.bin)
+  
+  ## To write the raster normaliced and binarized (current and future)
+  terra::writeRaster(x = stk, filename = glue('./tif/output/euc-nrm-bin/euc-run1_{gid}_{prc}.tif'), overwrite = TRUE)
+  
+  ## To compile the rasters binnary
+  ftr.avg <- mean(ftr.nrm)
+  ftr.avg.bin <- terra::classify(ftr.avg, mtx, include.lowest = T)
+  ftr.gcm.bin <- terra::classify(ftr.nrm, mtx, include.lowest = T)
+  
+  ## To write the rasters
+  terra::writeRaster(x = ftr.gcm.bin, filename = glue('./tif/output/euc-nrm-bin-gcm/euc-run1_{gid}_{prc}_gcms.tif'), overwrite = TRUE)
+  rm(ftr.avg, ftr.avg.bin, ftr.gcm.bin, stk, bsl.bin, ftr.bin)
+  gc(reset = T)
+  cat('Done!\n')
+
+}
+
+## To apply the function
+map(.x = gids, .f = function(gd){make.bins(gid = gd, prc = 0.99)})
+
+# To read the results -----------------------------------------------------
+fles.ftre <- as.character(dir_ls('./tif/output/euc-nrm-bin-gcm'))
+rstr.bsln <- as.character(dir_ls('./tif/output/euc-nrm-bin')) %>% map(rast, lyr = 1) %>% reduce(., c)
+
+# To draw the maps -------------
+
+## Function
+make.map <- function(gid){
+  
+  # gid <- gids[1]
+  
+  ##
+  cat('Point: ', gid, '\n')
+  rst.ftr <- rast(grep(gid, fles.ftre, value = T))
+  rst.bsl <- rstr.bsln[[grep(gid, names(rstr.bsln))]]
+  
+  ## 
+  rst.bsl <- as.factor(rst.bsl)
+  levels(rst.bsl) <- data.frame(id = c(0, 1), class = c('Not similarity', 'Similarity'))
+  
+  ## Extract GCM names
+  extract_gcm_names <- function(r){names(r) %>% strsplit("_") %>% sapply(function(x) x[2]) %>% unique()}
+  gcm_names <- extract_gcm_names(rst.ftr)
+  
+  ## Baseline map con geom_spatraster
+  g.bsl <- ggplot() + 
+    geom_spatraster(data = rst.bsl, aes(fill = class)) +
+    scale_fill_manual(values = c('Not Similarity' = 'grey80', 
+                                 'Similarity' = 'forestgreen'),
+                      na.value = NA) +
+    geom_sf(data = wrld, fill = NA, col = 'grey30') +
+    labs(x = '', y = '', fill = '') +
+    ggtitle(label = gid) +
+    coord_sf() +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(face = 'bold', size = 14),
+      strip.text = element_text(face = 'bold'),
+      legend.position = 'bottom'
+    )
+  
+  
+  ## 
+  tbl.bsl <- terra::as.data.frame(rst.bsl, xy = T) %>% 
+    as_tibble() %>% 
+    setNames(c('x', 'y', 'type')) %>% 
+    mutate(class = ifelse(type == 0, 'Not Similarity', 'Similarity'), 
+           class = factor(class, levels = c('Not Similarity', 'Similarity')))
+  
+  ##
+  tbl.ftr <- terra::as.data.frame(rst.ftr, xy = T) %>% 
+    as_tibble() %>% 
+    gather(var, value, -c(x, y)) %>% 
+    separate(data = ., col = 'var', into = c('euc', 'gcm', 'gid', 'iso'), sep = '_') %>% 
+    mutate(class = ifelse(value == 0, 'Not Similarity', 'Similarity'), 
+           class = factor(class, levels = c('Not Similarity', 'Similarity')))
+  
+  ## Baseline map
+  g.bsl <- ggplot() + 
+    geom_tile(data = tbl.bsl, aes(x = x, y = y, fill = class)) + 
+    scale_fill_manual(values = c('grey80', 'forestgreen')) +
+    geom_sf(data = wrld, fill = NA, col = 'grey30') +
+    labs(x = '', y = '', fill = '') +
+    ggtitle(label = gid) +
+    coord_sf() +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(face = 'bold', size = 14),
+      strip.text = element_text(face = 'bold'),
+      legend.position = 'bottom'
+    )
+  
+  ## Future map
+  g.ftr <- ggplot() + 
+    geom_tile(data = tbl.ftr, aes(x = x, y = y, fill = class)) + 
+    facet_wrap(.~gcm) +
+    scale_fill_manual(values = c('grey', 'forestgreen')) +
+    geom_sf(data = cntn, fill = NA, col = 'grey30') +
+    labs(x = '', y = '', fill = '') +
+    ggtitle(label = gid) +
+    coord_sf() +
+    theme_minimal() +
+    theme(
+      legend.position = 'bottom',
+      strip.text = element_text(face = 'bold'),
+      plot.title = element_text(face = 'bold', hjust = 0.5)
+    )
+  
+  # To save the maps 
+  ggsave(plot = g.bsl, filename = glue('./png/maps/bsl-{gid}_99.jpg'), units = 'in', width = 7, height = 5, dpi = 300)
+  ggsave(plot = g.ftr, filename = glue('./png/maps/ftr_gcms-{gid}_99.jpg'), units = 'in', width = 15, height = 10, dpi = 300)
+  
+  rm(rst.bsl, rst.ftr, tbl.bsl, tbl.ftr, g.bsl, g.ftr)
+  gc(reset = T)
+
+}
+
+## To apply the function
+map(gids[2:length(gids)], make.map)
